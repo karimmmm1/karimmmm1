@@ -4,6 +4,7 @@
 #include <TFT_eSPI.h> // Requis pour l'écran AMOLED RM67162
 #include <SPI.h>      // Souvent requis par TFT_eSPI
 #include <ESP32Servo.h>
+#include <lvgl.h>     // LVGL Graphics Library
 
 // Configuration de TFT_eSPI :
 // La bibliothèque TFT_eSPI DOIT être configurée manuellement pour votre matériel.
@@ -43,6 +44,24 @@ Qmi8658c qmi(0x6B, 400000); // Adresse I2C 0x6B, fréquence 400kHz
 Servo servoDroit;
 Servo servoGauche;
 TFT_eSPI tft = TFT_eSPI(); // Objet pour l'écran TFT_eSPI
+
+// LVGL Display flushing
+void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p);
+
+// LVGL Globals
+static const uint16_t screenWidth  = 240;
+static const uint16_t screenHeight = 536;
+static lv_disp_draw_buf_t draw_buf;
+static lv_color_t buf_1[screenWidth * 10]; // Declare a buffer for 10 lines
+// static lv_color_t buf_2[screenWidth * 10]; // Optional second buffer
+
+// LVGL Label Objects for UI
+lv_obj_t *label_accel_x;
+lv_obj_t *label_accel_y;
+lv_obj_t *label_accel_z;
+lv_obj_t *label_servo_droit;
+lv_obj_t *label_servo_gauche;
+lv_obj_t *label_message; // For startup message
  
 // Pins des servos
 const int pinServoDroit = 17; // Broche modifiée
@@ -74,22 +93,76 @@ void initialiseServos() {
   servoDroit.write(angleServoDroit); // Position initiale
   servoGauche.write(angleServoGauche); // Position initiale
 }
+
+// LVGL Display flushing function
+void my_disp_flush(lv_disp_drv_t *disp_drv, const lv_area_t *area, lv_color_t *color_p) {
+    uint32_t w = (area->x2 - area->x1 + 1);
+    uint32_t h = (area->y2 - area->y1 + 1);
+
+    tft.startWrite();
+    tft.setAddrWindow(area->x1, area->y1, w, h);
+    tft.pushColors((uint16_t *)color_p, w * h, true);
+    tft.endWrite();
+
+    lv_disp_flush_ready(disp_drv);
+}
  
-// Initialise l'écran AMOLED avec TFT_eSPI
+// Initialise l'écran AMOLED avec TFT_eSPI et LVGL
 void initialiseEcran() {
-  tft.init(); // Initialisation de l'écran (tft.begin() peut aussi être utilisé)
-  tft.fillScreen(TFT_BLACK); // Efface l'écran avec du noir
-  tft.setTextSize(1);
-  tft.setTextColor(TFT_WHITE, TFT_BLACK); // Texte blanc sur fond noir
-  tft.setCursor(0, 0);
-  tft.println("Voiture RC Demarrage...");
-  // display.display(); // Plus nécessaire avec TFT_eSPI pour le dessin direct
-  delay(2000);
-  // Note: La vérification de l'échec d'initialisation avec TFT_eSPI
-  // est moins standardisée que pour Adafruit_SSD1306.
-  // Souvent, si tft.init() échoue, le code bloquera ou l'écran restera noir.
-  // Vous pouvez ajouter des vérifications spécifiques si votre matériel/setup le supporte.
-  Serial.println(F("Initialisation de l'écran TFT_eSPI terminée (pas de retour d'erreur standard)."));
+    // 1. Initialize TFT_eSPI
+    tft.begin();
+    tft.setRotation(0); // Ou votre rotation désirée
+    // pinMode(42, OUTPUT); // Exemple pour AMOLED_EN si nécessaire (vérifiez le brochage de votre carte)
+    // digitalWrite(42, HIGH);
+
+    // 2. Initialize LVGL
+    lv_init();
+    lv_disp_draw_buf_init(&draw_buf, buf_1, NULL, screenWidth * 10); // Initialiser le buffer d'affichage
+
+    // 3. Initialize LVGL Display Driver
+    static lv_disp_drv_t disp_drv;
+    lv_disp_drv_init(&disp_drv);
+    disp_drv.hor_res = screenWidth;
+    disp_drv.ver_res = screenHeight;
+    disp_drv.flush_cb = my_disp_flush;
+    disp_drv.draw_buf = &draw_buf;
+    lv_disp_drv_register(&disp_drv);
+
+    // 4. Create LVGL UI Elements (Labels)
+    lv_obj_t *scr = lv_scr_act(); // Obtenir l'écran actuel
+    lv_obj_set_style_bg_color(scr, lv_color_black(), LV_PART_MAIN); // Fond noir
+
+    label_message = lv_label_create(scr);
+    lv_label_set_text(label_message, "Voiture RC Demarrage...");
+    lv_obj_set_style_text_color(label_message, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(label_message, LV_ALIGN_TOP_MID, 0, 10);
+
+    label_accel_x = lv_label_create(scr);
+    lv_label_set_text(label_accel_x, "Accel X: Attente...");
+    lv_obj_set_style_text_color(label_accel_x, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(label_accel_x, LV_ALIGN_TOP_LEFT, 5, 40);
+
+    label_accel_y = lv_label_create(scr);
+    lv_label_set_text(label_accel_y, "Accel Y: Attente...");
+    lv_obj_set_style_text_color(label_accel_y, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(label_accel_y, LV_ALIGN_TOP_LEFT, 5, 60);
+
+    label_accel_z = lv_label_create(scr);
+    lv_label_set_text(label_accel_z, "Accel Z: Attente...");
+    lv_obj_set_style_text_color(label_accel_z, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(label_accel_z, LV_ALIGN_TOP_LEFT, 5, 80);
+    
+    label_servo_droit = lv_label_create(scr);
+    lv_label_set_text(label_servo_droit, "Servo D: Attente...");
+    lv_obj_set_style_text_color(label_servo_droit, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(label_servo_droit, LV_ALIGN_TOP_LEFT, 5, 100);
+
+    label_servo_gauche = lv_label_create(scr);
+    lv_label_set_text(label_servo_gauche, "Servo G: Attente...");
+    lv_obj_set_style_text_color(label_servo_gauche, lv_color_white(), LV_PART_MAIN);
+    lv_obj_align(label_servo_gauche, LV_ALIGN_TOP_LEFT, 5, 120);
+    
+    Serial.println(F("Initialisation de l'écran et de LVGL terminée."));
 }
  
 void initialiseCapteur() {
@@ -116,12 +189,26 @@ void initialiseCapteur() {
     while (true); // Loop indefinitely on failure
   }
 }
+
+// Nouvelle fonction pour mettre à jour les labels LVGL
+void mettre_a_jour_donnees_lvgl() {
+    lv_label_set_text_fmt(label_accel_x, "Accel X: %.2f", angleX);
+    lv_label_set_text_fmt(label_accel_y, "Accel Y: %.2f", angleY);
+    lv_label_set_text_fmt(label_accel_z, "Accel Z: %.2f", angleZ);
+    lv_label_set_text_fmt(label_servo_droit, "Servo D: %d", angleServoDroit);
+    lv_label_set_text_fmt(label_servo_gauche, "Servo G: %d", angleServoGauche);
+}
  
 void loop() {
-  lireDonneesCapteur();
-  afficherDonneesEcran(); // Nom de fonction mis à jour
-  controlerServos();
-  delay(100);
+    lv_timer_handler(); // Laisser LVGL gérer ses tâches
+    delay(5); // Période de tick LVGL
+
+    lireDonneesCapteur();
+    // afficherDonneesEcran(); // Remplacé par LVGL
+    mettre_a_jour_donnees_lvgl(); // Mettre à jour le contenu des labels LVGL
+    controlerServos();
+    
+    // delay(100); // Le délai original, ajuster au besoin avec LVGL
 }
  
 void lireDonneesCapteur() {
@@ -139,15 +226,7 @@ void lireDonneesCapteur() {
   // float temp = sensor_data.temperature;
 }
  
-// Affiche les données du capteur sur l'écran AMOLED
-void afficherDonneesEcran() {
-  tft.fillScreen(TFT_BLACK); // Efface l'écran (ou utilisez setTextColor avec fond pour éviter le clignotement)
-  tft.setCursor(0, 0);
-  tft.print("Accel X: "); tft.println(angleX);
-  tft.print("Accel Y: "); tft.println(angleY);
-  tft.print("Accel Z: "); tft.println(angleZ);
-  // display.display(); // Plus nécessaire avec TFT_eSPI
-}
+// L'ancienne fonction afficherDonneesEcran() est maintenant supprimée car LVGL gère l'affichage.
  
 void controlerServos() {
   if (angleY > 1) {
